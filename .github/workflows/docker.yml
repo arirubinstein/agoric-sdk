@@ -1,6 +1,23 @@
 name: Build release Docker Images
 
 on:
+  workflow_dispatch:
+    inputs:
+      dockerOrg:
+        description: "Docker org to publish to"
+        default: "arirubinstein"
+        type: string
+        required: true
+      dockerPublish:
+        description: "actually publish docker images"
+        default: false
+        type: boolean
+        required: true
+      dockerPlatforms:
+        description: "platforms to build"
+        default: "linux/amd64,linux/arm64/v8"
+        type: string
+        required: true
   push:
     branches: [master] # $default-branch
     tags:
@@ -10,8 +27,8 @@ jobs:
   docker-deployment:
     runs-on: ubuntu-latest
     outputs:
-      tags: '${{ steps.docker-tags.outputs.tags }},${{ steps.deployment.outputs.snapshot-tag }}'
-      snapshot-tag: '${{ steps.deployment.outputs.snapshot-tag }}'
+      tags: '${{ steps.docker-tags.outputs.tags }},${{ steps.snapshot-tag.outputs.tag }}'
+      snapshot-tag: '${{ steps.snapshot-tag.outputs.tag }}'
     steps:
       - uses: actions/checkout@v2
       - name: Compute docker-tags
@@ -29,17 +46,38 @@ jobs:
               ;;
           esac
           echo "::set-output name=tags::$DOCKER_TAGS"
-      - name: Build setup image
-        uses: elgohr/Publish-Docker-Github-Action@3.04
-        id: deployment
+      - name: Generate Snapshot Tag
+        id: snapshot-tag
+        run: |
+          TIMESTAMP=`date +%Y%m%d%H%M%S`
+          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-6)
+          SNAPSHOT_TAG="${TIMESTAMP}${SHORT_SHA}"
+          echo "::set-output name=tag::$SNAPSHOT_TAG"
+      - name: Prefix tags
+        id: prefix-tags
+        run: |
+          IMAGE="${{inputs.dockerOrg}}/deployment"
+          TAGS="${{ steps.docker-tags.outputs.tags }},${{ steps.snapshot-tag.outputs.tag }}"
+          # prefix with image tags
+          PREFIXED=$(echo "$TAGS" | awk "NR==1{gsub(/^|,/,\"&$IMAGE:\")} 1")
+          echo "::set-output name=tags::$PREFIXED"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
         with:
-          name: agoric/deployment
-          dockerfile: packages/deployment/Dockerfile.deployment
-          context: packages/deployment/docker
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-          snapshot: true
-          tags: '${{ steps.docker-tags.outputs.tags }}'
+      - name: Build and Push
+        uses: docker/build-push-action@v2
+        with:
+          file: packages/deployment/Dockerfile.deployment
+          context: packages/deployment/docker
+          platforms: '${{inputs.dockerPlatforms}}'
+          push: ${{inputs.dockerPublish}}
+          tags: '${{ steps.prefix-tags.outputs.tags }}'
       - name: notify on failure
         if: failure()
         uses: ./.github/actions/notify-status
@@ -63,18 +101,40 @@ jobs:
       - name: Save commit hash, url of submodules to environment
         run: |
           node packages/xsnap/src/build.js --show-env >> $GITHUB_ENV
-      - name: Build SDK image
-        id: build-sdk
-        uses: elgohr/Publish-Docker-Github-Action@3.04
+      - name: Prefix tags
+        id: prefix-tags
+        run: |
+          IMAGE="${{inputs.dockerOrg}}/agoric-sdk"
+          TAGS="${{ needs.docker-deployment.outputs.tags }}"
+          # prefix with image tags
+          PREFIXED=$(echo "$TAGS" | awk "NR==1{gsub(/^|,/,\"&$IMAGE:\")} 1")
+          echo "::set-output name=tags::$PREFIXED"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
         with:
-          name: agoric/agoric-sdk
-          dockerfile: packages/deployment/Dockerfile.sdk
-          # When changing/adding entries here, make sure to search the whole
-          # project for `@@AGORIC_DOCKER_SUBMODULES@@`
-          buildargs: GIT_COMMIT,MODDABLE_COMMIT_HASH,MODDABLE_URL,XSNAP_NATIVE_COMMIT_HASH,XSNAP_NATIVE_URL,GIT_REVISION
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-          tags: '${{ needs.docker-deployment.outputs.tags }}'
+      - name: Build and Push
+        id: build-sdk
+        uses: docker/build-push-action@v2
+        with:
+          file: packages/deployment/Dockerfile.sdk
+          platforms: '${{inputs.dockerPlatforms}}'
+          push: ${{inputs.dockerPublish}}
+          tags: '${{ steps.prefix-tags.outputs.tags }}'
+          # When changing/adding entries here, make sure to search the whole
+          # project for `@@AGORIC_DOCKER_SUBMODULES@@`
+          build-args: |
+            GIT_COMMIT=${{env.GIT_COMMIT}}
+            MODDABLE_COMMIT_HASH=${{env.MODDABLE_COMMIT_HASH}}
+            MODDABLE_URL=${{env.MODDABLE_URL}}
+            XSNAP_NATIVE_COMMIT_HASH=${{env.XSNAP_NATIVE_COMMIT_HASH}}
+            XSNAP_NATIVE_URL=${{env.XSNAP_NATIVE_URL}}
+            GIT_REVISION=${{env.GIT_REVISION}}
       - name: notify on failure
         if: failure()
         uses: ./.github/actions/notify-status
@@ -93,16 +153,34 @@ jobs:
       - uses: actions/checkout@v2
       - name: Save SDK_TAG
         run: echo "SDK_TAG=${{ needs.docker-sdk.outputs.snapshot-tag }}" >> $GITHUB_ENV
-      - name: Build ibc-alpha image
-        uses: elgohr/Publish-Docker-Github-Action@3.04
+      - name: Prefix tags
+        id: prefix-tags
+        run: |
+          IMAGE="${{inputs.dockerOrg}}/agoric-sdk"
+          TAGS="ibc-alpha"
+          # prefix with image tags
+          PREFIXED=$(echo "$TAGS" | awk "NR==1{gsub(/^|,/,\"&$IMAGE:\")} 1")
+          echo "::set-output name=tags::$PREFIXED"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
         with:
-          name: agoric/agoric-sdk
-          dockerfile: packages/deployment/Dockerfile.ibc-alpha
-          context: packages/deployment/docker
-          buildargs: SDK_TAG
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-          tags: ibc-alpha
+      - name: Build and Push
+        id: build-sdk
+        uses: docker/build-push-action@v2
+        with:
+          file: packages/deployment/Dockerfile.ibc-alpha
+          context: packages/deployment/docker
+          platforms: '${{inputs.dockerPlatforms}}'
+          push: ${{inputs.dockerPublish}}
+          tags: '${{ steps.prefix-tags.outputs.tags }}'
+          build-args: |
+            SDK_TAG=${{env.SDK_TAG}}
       - name: notify on failure
         if: failure()
         uses: ./.github/actions/notify-status
@@ -116,15 +194,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - name: Build ag-solo image
-        uses: elgohr/Publish-Docker-Github-Action@3.04
+      - name: Prefix tags
+        id: prefix-tags
+        run: |
+          IMAGE="${{inputs.dockerOrg}}/cosmic-swingset-solo"
+          TAGS="${{ needs.docker-sdk.outputs.tags }}"
+          # prefix with image tags
+          PREFIXED=$(echo "$TAGS" | awk "NR==1{gsub(/^|,/,\"&$IMAGE:\")} 1")
+          echo "::set-output name=tags::$PREFIXED"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
         with:
-          name: agoric/cosmic-swingset-solo
-          dockerfile: packages/solo/Dockerfile
-          context: packages/solo
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-          tags: ${{ needs.docker-sdk.outputs.tags }}
+      - name: Build and Push
+        id: build-sdk
+        uses: docker/build-push-action@v2
+        with:
+          file: packages/solo/Dockerfile
+          context: packages/solo
+          platforms: '${{inputs.dockerPlatforms}}'
+          push: ${{inputs.dockerPublish}}
+          tags: '${{ steps.prefix-tags.outputs.tags }}'
       - name: notify on failure
         if: failure()
         uses: ./.github/actions/notify-status
@@ -138,15 +233,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - name: Build setup image
-        uses: elgohr/Publish-Docker-Github-Action@3.04
+      - name: Prefix tags
+        id: prefix-tags
+        run: |
+          IMAGE="${{inputs.dockerOrg}}/cosmic-swingset-setup"
+          TAGS="${{ needs.docker-sdk.outputs.tags }}"
+          # prefix with image tags
+          PREFIXED=$(echo "$TAGS" | awk "NR==1{gsub(/^|,/,\"&$IMAGE:\")} 1")
+          echo "::set-output name=tags::$PREFIXED"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
         with:
-          name: agoric/cosmic-swingset-setup
-          dockerfile: packages/deployment/Dockerfile
-          context: packages/deployment
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-          tags: ${{ needs.docker-sdk.outputs.tags }}
+      - name: Build and Push
+        uses: docker/build-push-action@v2
+        with:
+          file: packages/deployment/Dockerfile
+          context: packages/deployment
+          platforms: '${{inputs.dockerPlatforms}}'
+          push: ${{inputs.dockerPublish}}
       - name: notify on failure
         if: failure()
         uses: ./.github/actions/notify-status
