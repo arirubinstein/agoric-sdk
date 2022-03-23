@@ -1,4 +1,5 @@
 // @ts-check
+/* global globalThis */
 // eslint-disable-next-line import/no-extraneous-dependencies
 import { test } from '@agoric/zoe/tools/prepare-test-env-ava.js';
 
@@ -7,7 +8,6 @@ import path from 'path';
 import bundleSource from '@endo/bundle-source';
 
 import { E } from '@endo/eventual-send';
-import { VatData } from '@agoric/swingset-vat';
 import { makeZoeKit } from '../../src/zoeService/zoe.js';
 import { makeFakeVatAdmin } from '../../tools/fakeVatAdmin.js';
 
@@ -15,6 +15,9 @@ const filename = new URL(import.meta.url).pathname;
 const dirname = path.dirname(filename);
 
 const root = `${dirname}/../minimalMakeKindContract.js`;
+
+// Does not import from a module because this is testing the global env
+const { VatData } = globalThis;
 
 test('defineKind non-swingset', async t => {
   const bundle = await bundleSource(root);
