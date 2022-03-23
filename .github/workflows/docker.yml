@@ -1,23 +1,6 @@
 name: Build release Docker Images
 
 on:
-  workflow_dispatch:
-    inputs:
-      dockerOrg:
-        description: "Docker org to publish to"
-        default: "arirubinstein"
-        type: string
-        required: true
-      dockerPublish:
-        description: "actually publish docker images"
-        default: false
-        type: boolean
-        required: true
-      dockerPlatforms:
-        description: "platforms to build"
-        default: "linux/amd64,linux/arm64/v8"
-        type: string
-        required: true
   push:
     branches: [master] # $default-branch
     tags:
@@ -27,6 +10,7 @@ jobs:
   docker-deployment:
     runs-on: ubuntu-latest
     outputs:
+      tag: '${{ steps.docker-tags.outputs.tags }}'
       tags: '${{ steps.docker-tags.outputs.tags }},${{ steps.snapshot-tag.outputs.tag }}'
       snapshot-tag: '${{ steps.snapshot-tag.outputs.tag }}'
     steps:
@@ -56,7 +40,7 @@ jobs:
       - name: Prefix tags
         id: prefix-tags
         run: |
-          IMAGE="${{inputs.dockerOrg}}/deployment"
+          IMAGE="arirubinstein/deployment"
           TAGS="${{ steps.docker-tags.outputs.tags }},${{ steps.snapshot-tag.outputs.tag }}"
           # prefix with image tags
           PREFIXED=$(echo "$TAGS" | awk "NR==1{gsub(/^|,/,\"&$IMAGE:\")} 1")
@@ -75,8 +59,8 @@ jobs:
         with:
           file: packages/deployment/Dockerfile.deployment
           context: packages/deployment/docker
-          platforms: '${{inputs.dockerPlatforms}}'
-          push: ${{inputs.dockerPublish}}
+          platforms: linux/amd64,linux/arm64/v8
+          push: true
           tags: '${{ steps.prefix-tags.outputs.tags }}'
       - name: notify on failure
         if: failure()
@@ -90,6 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: docker-deployment
     outputs:
+      tag: '${{ needs.docker-deployment.outputs.tag }}'
       tags: '${{ needs.docker-deployment.outputs.tags }}'
       snapshot-tag: '${{ needs.docker-deployment.outputs.snapshot-tag }}'
     steps:
@@ -104,7 +89,7 @@ jobs:
       - name: Prefix tags
         id: prefix-tags
         run: |
-          IMAGE="${{inputs.dockerOrg}}/agoric-sdk"
+          IMAGE="arirubinstein/agoric-sdk"
           TAGS="${{ needs.docker-deployment.outputs.tags }}"
           # prefix with image tags
           PREFIXED=$(echo "$TAGS" | awk "NR==1{gsub(/^|,/,\"&$IMAGE:\")} 1")
@@ -123,8 +108,9 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           file: packages/deployment/Dockerfile.sdk
-          platforms: '${{inputs.dockerPlatforms}}'
-          push: ${{inputs.dockerPublish}}
+          context: ./
+          platforms: linux/amd64,linux/arm64/v8
+          push: true
           tags: '${{ steps.prefix-tags.outputs.tags }}'
           # When changing/adding entries here, make sure to search the whole
           # project for `@@AGORIC_DOCKER_SUBMODULES@@`
@@ -148,7 +134,7 @@ jobs:
   docker-ibc-alpha:
     needs: docker-sdk
     runs-on: ubuntu-latest
-    if: ${{ needs.docker-sdk.outputs.tags }} != dev
+    if: ${{ needs.docker-sdk.outputs.tag }} != dev
     steps:
       - uses: actions/checkout@v2
       - name: Save SDK_TAG
@@ -156,7 +142,7 @@ jobs:
       - name: Prefix tags
         id: prefix-tags
         run: |
-          IMAGE="${{inputs.dockerOrg}}/agoric-sdk"
+          IMAGE="arirubinstein/agoric-sdk"
           TAGS="ibc-alpha"
           # prefix with image tags
           PREFIXED=$(echo "$TAGS" | awk "NR==1{gsub(/^|,/,\"&$IMAGE:\")} 1")
@@ -176,8 +162,8 @@ jobs:
         with:
           file: packages/deployment/Dockerfile.ibc-alpha
           context: packages/deployment/docker
-          platforms: '${{inputs.dockerPlatforms}}'
-          push: ${{inputs.dockerPublish}}
+          platforms: linux/amd64,linux/arm64/v8
+          push: true
           tags: '${{ steps.prefix-tags.outputs.tags }}'
           build-args: |
             SDK_TAG=${{env.SDK_TAG}}
@@ -197,7 +183,7 @@ jobs:
       - name: Prefix tags
         id: prefix-tags
         run: |
-          IMAGE="${{inputs.dockerOrg}}/cosmic-swingset-solo"
+          IMAGE="arirubinstein/cosmic-swingset-solo"
           TAGS="${{ needs.docker-sdk.outputs.tags }}"
           # prefix with image tags
           PREFIXED=$(echo "$TAGS" | awk "NR==1{gsub(/^|,/,\"&$IMAGE:\")} 1")
@@ -217,8 +203,8 @@ jobs:
         with:
           file: packages/solo/Dockerfile
           context: packages/solo
-          platforms: '${{inputs.dockerPlatforms}}'
-          push: ${{inputs.dockerPublish}}
+          platforms: linux/amd64,linux/arm64/v8
+          push: true
           tags: '${{ steps.prefix-tags.outputs.tags }}'
       - name: notify on failure
         if: failure()
@@ -236,7 +222,7 @@ jobs:
       - name: Prefix tags
         id: prefix-tags
         run: |
-          IMAGE="${{inputs.dockerOrg}}/cosmic-swingset-setup"
+          IMAGE="arirubinstein/cosmic-swingset-setup"
           TAGS="${{ needs.docker-sdk.outputs.tags }}"
           # prefix with image tags
           PREFIXED=$(echo "$TAGS" | awk "NR==1{gsub(/^|,/,\"&$IMAGE:\")} 1")
@@ -251,12 +237,13 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Build and Push
+        id: build-sdk
         uses: docker/build-push-action@v2
         with:
           file: packages/deployment/Dockerfile
           context: packages/deployment
-          platforms: '${{inputs.dockerPlatforms}}'
-          push: ${{inputs.dockerPublish}}
+          platforms: linux/amd64,linux/arm64/v8
+          push: true
       - name: notify on failure
         if: failure()
         uses: ./.github/actions/notify-status
